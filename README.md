@@ -73,7 +73,8 @@ validates locally, then ships a branch + PR and updates the ticket.
 
 ### 4. Generate Code (`generate_code`) — Claude Sonnet 4.6
 - Receives: Opus plan + cached graph snippets
-- Outputs: unified diffs per file, commit message, PR title, PR description
+- Outputs: full file content per file, commit message, PR title, PR description
+- Files are written directly to disk (no `patch` required)
 
 ### 5. Validate (`validate`)
 | Flag | Value | Behaviour |
@@ -215,10 +216,11 @@ RETRY=false                         # true = one Sonnet fix attempt on failure
 ## How to Spin Up
 
 ### Prerequisites
-- Python 3.11+
-- `git` and `patch` installed
+- Python 3.11+ (use `python3` — `python` alias not required)
+- `git` installed
 - Notion integration created and connected to your database
 - GitHub personal access token (repo scope)
+- Target repo remote set to HTTPS (not SSH) so the GitHub token can authenticate pushes
 
 ### Step 1 — Install dependencies
 
@@ -248,17 +250,16 @@ This creates the full Zettelkasten folder structure and a starter `decisions.md`
 ### Step 4 — Generate the first code graph
 
 ```bash
-cd $REPO_PATH
-graphify . --obsidian --obsidian-dir $OBSIDIAN_VAULT_PATH/graphify/$OBSIDIAN_PROJECT_NAME
+graphify update $REPO_PATH
 ```
 
-This scans your codebase, outputs `graphify-out/graph.json`, and populates the vault with graph notes. Future runs use `--update` and only process changed files.
+This scans your codebase and outputs `graphify-out/graph.json`. The agent re-runs this automatically on each ticket using the same command. For new-feature tickets where no existing code matches, the agent falls back to passing the full repo file list to Opus.
 
 ### Step 5 — Run the agent
 
 ```bash
 cd /path/to/eng-agent
-python main.py
+python3 main.py
 ```
 
 The agent will:
@@ -269,6 +270,8 @@ The agent will:
 5. Push a branch, open a PR, update Notion to `Done`
 6. Write a session log to the vault
 7. Stop (single ticket per run)
+
+On any unhandled crash the ticket is automatically reset to `Not started` with the error written to its Description.
 
 ### Step 6 — Optional: rebuild graph on every commit
 
