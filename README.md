@@ -189,7 +189,7 @@ eng-agent/
 ```env
 # Notion
 NOTION_API_KEY=                     # from notion.so/my-integrations
-NOTION_DATABASE_ID=6414b49db9644262a2f6c4ab2dd0e298
+NOTION_DATABASE_ID=
 
 # Claude
 ANTHROPIC_API_KEY=
