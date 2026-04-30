@@ -13,7 +13,7 @@ Output ONLY valid JSON in this exact shape:
   "code_changes": [
     {
       "file": "path/to/file.py",
-      "diff": "unified diff string"
+      "content": "complete file content as a string"
     }
   ],
   "commit_message": "short imperative message",
@@ -24,9 +24,9 @@ Output ONLY valid JSON in this exact shape:
 Rules:
 - Follow existing code style in the snippets provided
 - Minimal changes only — do not refactor unrelated code
-- diff must be a valid unified diff (--- a/file +++ b/file @@ ... @@)
+- content must be the COMPLETE file content (not a diff), ready to write to disk
 - Max 20 files
-- No secrets or credentials in diffs
+- No secrets or credentials in content
 """
 
 
@@ -49,9 +49,9 @@ RISKS:
 {chr(10).join(state['risks'])}
 """.strip()
 
-    response = _client.messages.create(
+    with _client.messages.stream(
         model="claude-sonnet-4-6",
-        max_tokens=4096,
+        max_tokens=32000,
         system=SYSTEM_PROMPT,
         messages=[
             {
@@ -69,9 +69,8 @@ RISKS:
                 ],
             }
         ],
-    )
-
-    raw = response.content[0].text
+    ) as stream:
+        raw = stream.get_final_message().content[0].text
     result = _parse_json(raw)
 
     print(f"[SONNET] Generated {len(result.get('code_changes', []))} file change(s)")
@@ -86,7 +85,17 @@ RISKS:
 
 
 def _parse_json(text: str) -> dict:
+    if not text or not text.strip():
+        raise ValueError("Sonnet returned an empty response")
+    # Complete code fence
     match = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
     if match:
         text = match.group(1)
-    return json.loads(text.strip())
+    else:
+        # Truncated code fence — strip the opening fence line if present
+        text = re.sub(r"^```(?:json)?\s*", "", text.strip())
+    try:
+        return json.loads(text.strip())
+    except json.JSONDecodeError as e:
+        print(f"[SONNET] Parse error: {e}\nRaw response (first 500 chars):\n{text[:500]}")
+        raise

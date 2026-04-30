@@ -38,6 +38,7 @@ def validate(state: AgentState) -> AgentState:
             **state,
             "validation_passed": False,
             "failure_message": failure,
+            "status": "blocked",
             "_originals": originals,   # kept for fix node to rollback if needed
         }
 
@@ -48,25 +49,14 @@ def validate(state: AgentState) -> AgentState:
 def _apply_diffs(code_changes: list[dict], repo: Path) -> str | None:
     for change in code_changes:
         filepath = repo / change["file"]
-        diff = change.get("diff", "")
-        if not diff:
+        content = change.get("content")
+        if content is None:
             continue
         try:
-            result = subprocess.run(
-                ["patch", "-p1", "--no-backup-if-mismatch"],
-                input=diff,
-                capture_output=True,
-                text=True,
-                cwd=repo,
-            )
-            if result.returncode != 0:
-                return result.stderr or result.stdout
-        except FileNotFoundError:
-            # patch not available — write full content if provided
-            full = change.get("content")
-            if full:
-                filepath.parent.mkdir(parents=True, exist_ok=True)
-                filepath.write_text(full, encoding="utf-8")
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            filepath.write_text(content, encoding="utf-8")
+        except Exception as e:
+            return f"Failed to write {change['file']}: {e}"
     return None
 
 
@@ -75,13 +65,13 @@ def _run_checks(repo: Path) -> list[dict]:
 
     # Detect and run tests
     if (repo / "pytest.ini").exists() or (repo / "pyproject.toml").exists():
-        results.append(_run("Tests", ["python", "-m", "pytest", "--tb=short", "-q"], repo))
+        results.append(_run("Tests", ["python3", "-m", "pytest", "--tb=short", "-q"], repo))
     elif (repo / "package.json").exists():
         results.append(_run("Tests", ["npm", "test", "--", "--watchAll=false"], repo))
 
     # Lint
     if (repo / "pyproject.toml").exists() or list(repo.glob("*.py")):
-        results.append(_run("Lint", ["python", "-m", "ruff", "check", "."], repo))
+        results.append(_run("Lint", ["python3", "-m", "ruff", "check", "."], repo))
     elif (repo / "package.json").exists():
         results.append(_run("Lint", ["npx", "eslint", "."], repo))
 

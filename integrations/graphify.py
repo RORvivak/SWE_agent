@@ -15,11 +15,7 @@ def build_code_graph(roles: list[str], epic: str, problem: str) -> dict:
 
     # Run graphify — only processes files changed since last run (SHA256 cache)
     result = subprocess.run(
-        [
-            "graphify", ".", "--update",
-            "--obsidian", "--obsidian-dir", str(obsidian_out),
-        ],
-        cwd=repo,
+        ["graphify", "update", str(repo)],
         capture_output=True,
         text=True,
     )
@@ -67,15 +63,16 @@ def _filter_subgraph(graph: dict, keywords: list[str], roles: list[str]) -> dict
     nodes = graph.get("nodes", [])
     edges = graph.get("edges", [])
 
-    # Score and filter nodes
+    # Score and filter nodes (graph uses source_file + label as keys)
     relevant_ids = set()
     relevant_nodes = []
     for node in nodes:
-        file_path = node.get("file", "")
+        file_path = node.get("source_file", "") or node.get("file", "")
         ext = Path(file_path).suffix
         if allowed_exts and ext not in allowed_exts:
             continue
-        score = sum(1 for kw in keywords if kw in file_path.lower() or kw in node.get("name", "").lower())
+        label = node.get("label", "") or node.get("name", "")
+        score = sum(1 for kw in keywords if kw in file_path.lower() or kw in label.lower())
         if score > 0:
             relevant_ids.add(node.get("id"))
             relevant_nodes.append(node)
@@ -89,18 +86,34 @@ def _filter_subgraph(graph: dict, keywords: list[str], roles: list[str]) -> dict
     # Extract code snippets from relevant nodes (if graphify provides them)
     snippets = [
         {
-            "file": n.get("file"),
-            "name": n.get("name"),
-            "lines": n.get("lines", ""),
+            "file": n.get("source_file", n.get("file")),
+            "name": n.get("label", n.get("name")),
+            "lines": n.get("source_location", n.get("lines", "")),
             "code": n.get("snippet", ""),
         }
         for n in relevant_nodes
         if n.get("snippet")
     ]
 
+    if not relevant_nodes:
+        # New feature — no existing code matches. Return the repo file structure
+        # so Opus can decide where to add new files.
+        all_files = sorted({
+            n.get("source_file", "") or n.get("file", "")
+            for n in nodes
+            if n.get("source_file") or n.get("file")
+        })
+        return {
+            "nodes": [],
+            "edges": [],
+            "snippets": [],
+            "files_scanned": all_files[:200],
+            "repo_structure": all_files[:200],
+        }
+
     return {
-        "nodes": relevant_nodes[:50],   # cap to avoid token overflow
+        "nodes": relevant_nodes[:50],
         "edges": relevant_edges[:100],
         "snippets": snippets[:20],
-        "files_scanned": list({n.get("file") for n in relevant_nodes}),
+        "files_scanned": list({n.get("source_file", n.get("file")) for n in relevant_nodes}),
     }

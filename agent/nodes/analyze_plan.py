@@ -28,7 +28,7 @@ def analyze_plan(state: AgentState) -> AgentState:
     print("[OPUS] Analyzing ticket and producing plan...")
 
     graph_text = json.dumps(
-        {k: v for k, v in state["code_graph"].items() if k != "snippets"}, indent=2
+        {k: v for k, v in state["code_graph"].items() if k not in ("snippets",)}, indent=2
     )
     memory_text = "\n\n".join(state["memory_notes"]) or "No relevant past decisions found."
 
@@ -46,7 +46,7 @@ DESCRIPTION:
 
     response = _client.messages.create(
         model="claude-opus-4-7",
-        max_tokens=1024,
+        max_tokens=4096,
         system=SYSTEM_PROMPT,
         messages=[
             {
@@ -93,10 +93,13 @@ DESCRIPTION:
 
 
 def _parse_json(text: str) -> dict:
-    # Strip markdown code fences if present
+    if not text or not text.strip():
+        raise ValueError("Opus returned an empty response")
     match = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
     if match:
         text = match.group(1)
+    else:
+        text = re.sub(r"^```(?:json)?\s*", "", text.strip())
     return json.loads(text.strip())
 
 
