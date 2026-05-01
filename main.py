@@ -16,7 +16,7 @@ def main():
         "ticket_phase": "",
         "ticket_depends_on": "",
         "ticket_wave": None,
-        "code_graph": {},
+        "graph_context": "",
         "memory_notes": [],
         "problem": "",
         "plan": [],
