@@ -1,101 +1,88 @@
 import json
-import re
-import anthropic
+import uuid
+import subprocess
+from pathlib import Path
 from agent.state import AgentState
 from config import settings
 
-_client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+PROMPT_TEMPLATE = """You are a senior software engineer implementing a plan on this codebase.
 
-SYSTEM_PROMPT = """You are a senior software engineer implementing a plan.
+PROBLEM:
+{problem}
 
-Output ONLY valid JSON in this exact shape:
-{
-  "code_changes": [
-    {
-      "file": "path/to/file.py",
-      "content": "complete file content as a string"
-    }
-  ],
+PLAN:
+{plan}
+
+FILES TO MODIFY:
+{files}
+
+RISKS:
+{risks}
+
+Instructions:
+1. Read each file listed above (use the Read tool)
+2. Implement the plan by writing the updated files to disk (use the Write/Edit tools)
+3. Write the following JSON to {result_file}:
+
+{{
+  "changed_files": ["relative/path/file.py"],
   "commit_message": "short imperative message",
   "pr_title": "concise PR title under 70 chars",
   "pr_description": "what changed, why, and impact"
-}
+}}
 
 Rules:
-- Follow existing code style in the snippets provided
+- Match existing code style exactly
 - Minimal changes only — do not refactor unrelated code
-- content must be the COMPLETE file content (not a diff), ready to write to disk
-- Max 20 files
-- No secrets or credentials in content
+- No secrets or credentials
+- You MUST write {result_file} as your last action
 """
 
 
 def generate_code(state: AgentState) -> AgentState:
     print("[SONNET] Generating code...")
 
-    snippets_text = json.dumps(state["code_graph"].get("snippets", []), indent=2)
+    result_file = f"/tmp/eng-agent-{uuid.uuid4().hex[:8]}.json"
 
-    plan_text = f"""
-PROBLEM:
-{state['problem']}
+    prompt = PROMPT_TEMPLATE.format(
+        problem=state["problem"],
+        plan="\n".join(f"{i+1}. {step}" for i, step in enumerate(state["plan"])),
+        files="\n".join(state["files_to_modify"]),
+        risks="\n".join(state["risks"]),
+        result_file=result_file,
+    )
 
-PLAN:
-{chr(10).join(f'{i+1}. {step}' for i, step in enumerate(state['plan']))}
+    result = subprocess.run(
+        [settings.claude_bin, "-p", prompt, "--model", "claude-sonnet-4-6",
+         "--dangerously-skip-permissions"],
+        capture_output=True,
+        text=True,
+        cwd=settings.repo_path,
+        timeout=600,
+    )
 
-FILES TO MODIFY:
-{chr(10).join(state['files_to_modify'])}
+    if result.returncode != 0:
+        raise RuntimeError(f"claude subprocess failed:\n{result.stderr[:500]}")
 
-RISKS:
-{chr(10).join(state['risks'])}
-""".strip()
+    result_path = Path(result_file)
+    if not result_path.exists():
+        raise RuntimeError(
+            f"claude did not write result file {result_file}.\n"
+            f"stdout (first 300):\n{result.stdout[:300]}"
+        )
 
-    with _client.messages.stream(
-        model="claude-sonnet-4-6",
-        max_tokens=32000,
-        system=SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"RELEVANT CODE SNIPPETS:\n{snippets_text}",
-                        "cache_control": {"type": "ephemeral"},
-                    },
-                    {
-                        "type": "text",
-                        "text": plan_text,
-                    },
-                ],
-            }
-        ],
-    ) as stream:
-        raw = stream.get_final_message().content[0].text
-    result = _parse_json(raw)
+    parsed = json.loads(result_path.read_text())
+    result_path.unlink(missing_ok=True)
 
-    print(f"[SONNET] Generated {len(result.get('code_changes', []))} file change(s)")
+    changed_files = parsed.get("changed_files", state["files_to_modify"])
+    code_changes = [{"file": f} for f in changed_files]
+
+    print(f"[SONNET] Wrote {len(code_changes)} file(s) to disk")
 
     return {
         **state,
-        "code_changes": result.get("code_changes", []),
-        "commit_message": result.get("commit_message", ""),
-        "pr_title": result.get("pr_title", state["ticket_title"]),
-        "pr_description": result.get("pr_description", ""),
+        "code_changes": code_changes,
+        "commit_message": parsed.get("commit_message", ""),
+        "pr_title": parsed.get("pr_title", state["ticket_title"]),
+        "pr_description": parsed.get("pr_description", ""),
     }
-
-
-def _parse_json(text: str) -> dict:
-    if not text or not text.strip():
-        raise ValueError("Sonnet returned an empty response")
-    # Complete code fence
-    match = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
-    if match:
-        text = match.group(1)
-    else:
-        # Truncated code fence — strip the opening fence line if present
-        text = re.sub(r"^```(?:json)?\s*", "", text.strip())
-    try:
-        return json.loads(text.strip())
-    except json.JSONDecodeError as e:
-        print(f"[SONNET] Parse error: {e}\nRaw response (first 500 chars):\n{text[:500]}")
-        raise

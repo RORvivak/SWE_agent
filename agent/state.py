@@ -14,17 +14,17 @@ class AgentState(TypedDict):
     ticket_wave: int | None
 
     # Context (built locally — zero Claude calls)
-    code_graph: dict            # Graphify output
-    memory_notes: list[str]     # Obsidian top-3 excerpts
+    graph_context: str          # graphify query result (~2k tokens)
+    memory_notes: list[str]     # Obsidian top-3 excerpts (~400 tokens)
 
-    # Planning (Opus)
+    # Planning (Opus via claude -p)
     problem: str
     plan: list[str]
     files_to_modify: list[str]
     risks: list[str]
 
-    # Code (Sonnet)
-    code_changes: list[dict]    # [{file, diff}]
+    # Code (Sonnet via claude -p)
+    code_changes: list[dict]    # [{file, content}]
     commit_message: str
     pr_title: str
     pr_description: str
@@ -38,4 +38,4 @@ class AgentState(TypedDict):
     pr_url: str | None
 
     # Control
-    status: str                 # ready | in_progress | done | blocked | stopped
+    status: str                 # ready | done | blocked | stopped

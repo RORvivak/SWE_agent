@@ -5,7 +5,7 @@ _client = Client(auth=settings.notion_api_key)
 
 
 def fetch_next_ticket() -> dict | None:
-    """Query the DB for the first 'Not started' ticket."""
+    """Return the lowest-wave, highest-priority 'Not started' ticket that isn't blocked."""
     response = _client.databases.query(
         database_id=settings.notion_database_id,
         filter={
@@ -16,14 +16,14 @@ def fetch_next_ticket() -> dict | None:
             {"property": "Execution Wave", "direction": "ascending"},
             {"property": "Priority", "direction": "ascending"},
         ],
-        page_size=1,
     )
 
-    results = response.get("results", [])
-    if not results:
-        return None
+    for page in response.get("results", []):
+        ticket = _parse_ticket(page)
+        if "[AGENT BLOCKED]" not in (ticket.get("ticket_body") or ""):
+            return ticket
 
-    return _parse_ticket(results[0])
+    return None
 
 
 def mark_in_progress(ticket_id: str) -> None:
