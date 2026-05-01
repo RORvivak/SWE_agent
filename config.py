@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
     # Notion
     notion_api_key: str
-    notion_database_id: str = "6414b49db9644262a2f6c4ab2dd0e298"
+    notion_database_id: str
 
     # Claude (only needed if fix.py RETRY path is used)
     anthropic_api_key: str = ""
